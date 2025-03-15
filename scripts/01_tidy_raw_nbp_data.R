@@ -12,7 +12,7 @@ library(openxlsx)
 
 # raw data
 ## load raw data
-raw <- read_excel("data/a_raw_data/nbp_raw_jan_24.xlsx")
+raw <- read_xlsx("data/raw/nbp_raw_jan_24.xlsx")
 
 ## inspect raw data
 # str(raw)
@@ -34,12 +34,6 @@ int$survey_id <- paste(int$survey_date, int$park, int$loop, int$station, sep = "
 int[is.na(int$seen),]$seen <- 0
 int[is.na(int$heard), ]$heard <- 0
 int[is.na(int$fly), ]$fly <- 0
-
-## convert date/time fields to appropriate data classes
-## NOTE HOLD OFF FOR NOW, IT'S MAKING THE DEDUP RUN FUNNY
-##int$survey_date <- as.Date(int$survey_date, format = "%m/%d/%Y")
-##int$start_time <- hm(int$start_time)
-##int$end_time <- hm(int$end_time)
 
 
 ## check for duplicates
