@@ -9,51 +9,11 @@ rm(list = ls())
 library(tidyverse)
 library(readxl)
 
-# Custom bcs plotting theme at "code/00_bcs_theme.R"----
-
-bcs_colors <- c(
-  "dark green" = "#0A3C23",
-  "cream" = "#FAF5F0",
-  "yellow green" = "#E6FF55",
-  "peach" = "#FFB98C",
-  "bright green" = "#36BA3A"
-)
-
-theme_bcs <- function() {
-  theme(
-    # Backgrounds
-    panel.background = element_rect(fill = bcs_colors["cream"], color = NA),
-    plot.background = element_rect(fill = bcs_colors["cream"], color = NA),
-    panel.grid.major = element_line(color = bcs_colors["dark green"], linewidth = 0.5, linetype = "dotted"),
-    panel.grid.minor = ggplot2::element_blank(),
-    
-    # Text
-    text = element_text(color = bcs_colors["dark green"]),
-    axis.text = element_text(color = bcs_colors["dark green"]),
-    axis.title = element_text(color = bcs_colors["dark green"]),
-    plot.title = element_text(color = bcs_colors["dark green"], face = "bold", size = 28),
-    plot.subtitle = element_text(color = bcs_colors["dark green"], face = "italic", size = 22),
-    plot.caption = element_text(color = bcs_colors["dark green"], size = 8),
-    
-    # Lines and borders
-    axis.line = element_line(color = bcs_colors["dark green"]),
-    axis.ticks = element_line(color = bcs_colors["dark green"]),
-    panel.border = element_rect(color = bcs_colors["dark green"], fill = NA),
-    
-    # Legends
-    legend.background = element_rect(fill = bcs_colors["cream"]),
-    legend.key = element_rect(fill = bcs_colors["cream"]),
-    legend.text = element_text(color = bcs_colors["dark green"]),
-    legend.title = element_text(color = bcs_colors["dark green"]),
-    
-    # Facets
-    strip.background = element_rect(fill = bcs_colors["yellow green"]),
-    strip.text = element_text(color = bcs_colors["dark green"], face = "bold")
-  )
-}
+# Custom bcs plotting theme 
+source("functions/theme_bcs.R")
 
 # load tidied data (see script "01_tidy_raw_nbp.R" for details)
-dat <- read_excel("data/b_intermediate_data/nbp_tidy_jan_24.xlsx")
+dat <- read_excel("data/processed/nbp_tidy_jan_24.xlsx")
 
 # inspect data if desired
 ## str(dat)
@@ -64,9 +24,9 @@ dat <- read_excel("data/b_intermediate_data/nbp_tidy_jan_24.xlsx")
 ##### data completeness #####
 #############################
 
-# How complete is the data? do we have surveys for each loop for each month that we expect we would?
+# How complete are the data? do we have surveys for each loop for each month that we expect we would?
 ## What time range does the dataset cover?
-range(dat$survey_date) # 1996-04-13 to 2024-01-20, so the datset should include 8 months for 1996;
+range(dat$survey_date) # 1996-04-13 to 2024-01-20, so the dataset should include 8 months for 1996;
                        # 12 months for 1997-2019; in 2020 we shut down NBP in march and 1 month for 2024 (noting that we shut down NBP in 2020)
 
 
@@ -83,12 +43,15 @@ dcmp <- dat %>%
   left_join(., dmths) %>%
   mutate(completeness = nloop / Nloop / Nmonth)
 
+## some greater than 1. 
+dcmp$completeness[dcmp$completeness > 1] <- 1
+
 ## visualize with a heat map
 pcmp <- ggplot(dcmp, aes(x = year, y = park, fill= completeness)) + 
   geom_tile() + 
   scale_fill_gradient(low = bcs_colors["yellow green"], high = bcs_colors["dark green"]) + 
   labs(x = "", y = "") +
-  ggtitle("NBP data completeness") + 
+  ggtitle("Dataset completeness") + 
   theme_bcs() 
 
 pcmp
@@ -103,7 +66,7 @@ pcmp
  ####### survey summary ######
  #############################
  
-## HOW MANHY SURVEYS IN DATASET?
+## HOW MANY SURVEYS IN DATASET?
 
 length(unique(dat$survey_id))  # 39174 surveys BUT this includes the odd Magnuson surveys with non-existent station IDs
 dat %>% filter(!is.na(station.code)) %>% summarise(nsurv = n_distinct(survey_id))  ## 38,771 surveys
@@ -118,7 +81,7 @@ dyr <- dat %>%
 pyr <- ggplot(dyr, aes(x = year, y = nsurv)) +
   geom_col(fill = bcs_colors["dark green"]) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
-  xlab("") + ylab("Number of NBP point counts in dataset") + ggtitle("NBP point counts by year") +
+  xlab("Year") + ylab("Number of NBP point counts in dataset") + ggtitle("NBP point counts by year") +
   theme_bcs() +
   theme(panel.grid.major.x = element_blank())
 
@@ -158,31 +121,30 @@ pprk
 #############################
 
 # SPECIES TOTAL
-## remove observations not resolved to species level and remove hybrids
-dsp <- dat %>% filter(!str_detect(species, pattern = " sp\\.|Spotted Owl"))
-sort(unique(dsp$species)) # 212 species
+## remove spurious observations, observations not resolved to species level and remove hybrids
+dsp <- dat %>% filter(!str_detect(species, pattern = " sp\\.|Spotted Owl| x "))
+sort(unique(dsp$species)) # 211 species
 
 ## FREQUENTLY REPORTED SPECIES
 ### step 1, create species response matrix for each unique survey
 dfreq <- dat %>% 
-  mutate(observed = seen + heard + fly) %>%
+  mutate(observed = 1) %>%
   select(survey_id, species, observed) %>%
-  pivot_wider(names_from = species, values_from = observed)
+  pivot_wider(names_from = species, values_from = observed, values_fill = 0)
 
-### step 2: create proportion data
+### step 2: create mean abundance per survey 
 d <- colnames(dfreq[, -1]) ## vector of the species names
-times <- unname(apply(X = !is.na(dfreq[, -1]), MARGIN = 2, sum)) ## vector of the number of times each species has been reported
+times <- colSums(dfreq[, -1], na.rm = TRUE) ## vector of the number of times each species has been counted
+times <- enframe(times, name = "species", value = "nobs")
 
 #### add names and number of reports to a data frame, then create a new column dividing number of surveys reporting by total surveys
-dprop <- data.frame(species = d, 
-                    n_reported = times)
-dprop$prop_reported <- dprop$n_reported / length(unique(dfreq$survey_id))
+times$prop <- times$nobs / dim(dfreq)[1]
 
 #### reorder species factor levels to make plot more appealing
-dprop$species <- fct_reorder(dprop$species, dprop$prop_reported)
+times$species <- fct_reorder(times$species, times$prop)
 
 #### plot top 20 most frequenlty reported species
-pfreq <- ggplot(slice_max(dprop, prop_reported, n = 20), aes(x = species, y = prop_reported)) +
+pprop <- ggplot(slice_max(times, prop, n = 20), aes(x = species, y = prop)) +
   geom_col(fill = bcs_colors["dark green"]) +
   coord_flip() + 
   xlab("") + ylab("Propotion of surveys reporting") + ggtitle("Most frequently reported species on NBP counts") +
@@ -190,31 +152,37 @@ pfreq <- ggplot(slice_max(dprop, prop_reported, n = 20), aes(x = species, y = pr
   theme_bcs() +
   theme(panel.grid.major.y = element_blank())
 
-pfreq
+pprop
 
 #### print plot if desired
 # pdf("figures/02_prop_top_20.pdf", width = 11, height = 7)
-# print(pfreq)
+# print(pprop)
 # dev.off()
 
 # NOT ID'D TO SPECIES LEVEL
 ## create dataframe with just unresolved species, then count how many times each sp. occurs in the dataset
-dunr <- dat %>% filter(str_detect(species, pattern = " sp.")) %>%
+dunr <- dat %>% filter(str_detect(species, pattern = " sp\\.")) %>%
   group_by(species) %>%
   summarise(n = n()) %>%
   ungroup() %>%
   mutate(species = fct_reorder(species, n))
 
+library(ggbreak)
+
 punr <- ggplot(dunr, aes(x = species, y = n)) + 
   geom_col(fill = bcs_colors["dark green"]) +
   coord_flip() +
-  xlab("") + ylab("Number of times reported") + ggtitle("NBP observations not identified to species level") +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.1)),
-                     breaks = c(250, 500, 750, 1000, 1250, 1500)) +
+  labs(title = "NBP observations not identified to species level", y = "Number of times reported", x = "") +
+  #scale_y_break(c(270, 1350), expand = expansion(mult = c(0, 0))) +  # Adjust expansion to remove space
+  scale_y_continuous(limits = c(0, 1400), breaks = seq(0, 1400, by = 50), 
+                     expand = expansion(mult = c(0, 0)), position = "left") + 
   theme_bcs() +
-  theme(panel.grid.major.y = element_blank())
+  theme(
+    panel.grid.major.y = element_blank()  # Remove unnecessary grid lines
+  )
 
 punr
+
 
 ### print plot
 # pdf("figures/02_sp._reports.pdf", width = 11, height = 7)
@@ -224,7 +192,7 @@ punr
 # ABUNDANCE
 
 ## Which species have the highest mean abundance per survey (maps)
-dabund <- dat %>%
+dabund <- dat %>% filter(!str_detect(species, pattern = "sp\\.| x ")) %>%
   group_by(species) %>%
   summarise(nobs = sum(seen, heard, fly), nsurv = n_distinct(survey_id), maps_n = nobs / nsurv,
             maps_N = nobs / length(unique(dat$survey_id))) %>%
@@ -235,7 +203,7 @@ pmaps_n <- ggplot(slice_max(dabund, maps_n, n = 20), aes(x = species_n, y = maps
   geom_col(fill = bcs_colors["dark green"]) +
   coord_flip() + 
   scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
-  labs(x = "", y = "Mean abundance per survey when observed", title = "Mean abundance per survey when observed") +
+  labs(x = "", title = "Mean observed flock size", y = "Number of individuals") +
   theme_bcs() +
   theme(panel.grid.major.y = element_blank())
 
@@ -261,13 +229,11 @@ dNsurvyr <- dat %>%
 ### new data frame with mean abundance per survey per year
 dmapsN <- dat %>%
   group_by(year, species) %>%
-  summarise(nobs = sum(seen, fly, heard)) %>%
-  ungroup() %>%
+  summarise(nobs = sum(seen, fly, heard), .groups = "drop") %>%
   left_join(., dNsurvyr) %>%
   mutate(maps_N = nobs / Nsurv) %>%
   select(year, species, maps_N) %>%
-  pivot_wider(names_from = species, values_from = maps_N) %>%
-  replace(is.na(.), 0) %>% 
+  pivot_wider(names_from = species, values_from = maps_N, values_fill = 0) %>%
   pivot_longer(-1, names_to = "species", values_to = "maps_N")
 
 ### Visualize on heat map with sets of random species or by key word
@@ -279,13 +245,13 @@ spp <- d[sample(1:length(d), 20)]  # this will return 20 random
 ggplot(filter(dmapsN, species %in% spp), aes(x = year, y = species, fill = maps_N)) +
   geom_tile() +
   scale_fill_gradient(low = bcs_colors["yellow green"], high = bcs_colors["dark green"]) + 
-  labs(x = "", y = "") +
-  ggtitle("NBP observations") + 
+  labs(x = "Year", y = "", fill = str_wrap("Mean abundance per survey", width = 10)) +
+  ggtitle("Mean abundance per survey") + 
   theme_bcs()
 
 # SPECIES TOTALS BY LOCATION
 dS <- dat %>%
-  filter(!str_detect(species, pattern = " sp.| x ",),  ## filter out sp and hybrids
+  filter(!str_detect(species, pattern = " sp\\.| x ",),  ## filter out sp and hybrids
          species != "Spotted Owl") %>%  ## truely don't think we saw the spotted owl at Magnuson
   group_by(park) %>% 
   summarise(S = n_distinct(species)) %>%
@@ -300,11 +266,12 @@ pmeanS <- ggplot(dS, aes(x = park, y = S)) +
   geom_col(fill = bcs_colors["dark green"]) + 
   ylab("Total species reported") + xlab("") + ggtitle("NBP total species reported") +
   geom_hline(yintercept = mean(dS$S), color = bcs_colors["bright green"], lty = 2) +
-  geom_text(aes(label = S), color = bcs_colors["cream"], hjust = 1.4) +
+  geom_text(aes(label = S), color = bcs_colors["cream"], hjust = 1.4, family = "Archivo", size = 5) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.1)),
                      breaks = c(75, 150)) + 
   coord_flip() + 
-  annotate("text", x = 1, y = 107, label = paste("Avg =", round(meanS, 0), "species"), color = bcs_colors["dark green"]) +
+  annotate("text", x = 1, y = (meanS + 10), label = paste("Avg =", round(meanS, 0), "species"), 
+           color = bcs_colors["dark green"], family = "Archivo", size = 5) +
   theme_bcs() +
   theme(panel.grid.major.y = element_blank())
 
@@ -315,10 +282,12 @@ pmeanS
 # print(pmeanS)
 # dev.off()
 
-## Details survey histor and effort at each location
-history <- dat %>% group_by(park) %>% 
-  reframe(first = min(survey_date), last = max(survey_date), ncirc = n_distinct(station.code), 
-          nsurv = n_distinct(survey_id))
+## Details survey history and effort at each location
+history <- dat %>% group_by(park, year) %>% 
+  summarise(first = min(survey_date), last = max(survey_date), ncirc = n_distinct(station.code), 
+          nsurv = n_distinct(survey_id), .groups = "drop") %>%
+  mutate(park.year = paste(park, year, sep = "-")) %>%
+  select(park.year, first, last, ncirc, nsurv)
 
 write.csv(history, "results/survey_history_by_park.csv", row.names = FALSE)
 
@@ -327,36 +296,98 @@ write.csv(history, "results/survey_history_by_park.csv", row.names = FALSE)
 unique(dat[dat$park == "Magnuson Park", ]$station.code)
 
 ## is species richness correlated with longer survey history?
-Sprk <- dsp %>% group_by(park) %>% reframe(nsp = n_distinct(species)) %>% left_join(., history) %>%
+Sprk <- dat %>% 
+  filter(!str_detect(species, pattern = " x | sp\\.|Spotted Owl")) %>%
+  group_by(park, year) %>% 
+  summarise(nsp = n_distinct(species), .groups = "drop") %>% 
+  mutate(park.year = paste(park, year, sep = "-")) %>%
+  left_join(., history, join_by("park.year" == "park.year")) %>% 
   mutate(tenure = as.numeric(last - first))
 
-sncirc <- scale(Sprk$ncirc)
-snsurv <- scale(Sprk$nsurv)
-stenure <- scale(Sprk$tenure)
-y <- Sprk$nsp
 
-mod.null <- lm(y ~ 1)
-mod.1 <- lm(y ~ sncirc)
-mod.2 <- lm(y ~ snsurv)
-mod.3 <- lm(y ~ stenure)
-mod.4 <- lm(y ~ sncirc + snsurv + stenure)
-mod.5 <- lm(y ~ sncirc + stenure)
-mod.6 <- lm(y ~ snsurv + stenure)
-mod.7 <- lm(y ~ snsurv + sncirc)
+view(history)
+Sprk$sncirc <- as.numeric(scale(Sprk$ncirc))
+Sprk$snsurv <- as.numeric(scale(Sprk$nsurv))
+Sprk$yr <- Sprk$year - min(Sprk$year)
 
-summary(mod.null)
-summary(mod.1)
-summary(mod.2)
-summary(mod.3)
-summary(mod.5)
+mod.null <- glm(nsp ~ 1, data = Sprk, family = poisson)
+mod.1 <- glm(nsp ~ park, data = Sprk, family = poisson)
+mod.2 <- glm(nsp ~ park + yr, data = Sprk, family = poisson)
+mod.3 <- glm(nsp ~ sncirc, data = Sprk, family = poisson)
+mod.4 <- glm(nsp ~ snsurv, data = Sprk, family = poisson)
+mod.5 <- glm(nsp ~ sncirc + snsurv, data = Sprk, family = poisson)
+mod.6 <- glm(nsp ~ sncirc + snsurv + park, data = Sprk, family = poisson)
+mod.7 <- glm(nsp ~ sncirc + snsurv + park + yr, data = Sprk, family = poisson)
 
-29.289/sd(Sprk$tenure)*365
+mod_list <- list("null" = mod.null, "1" = mod.1, "2" = mod.2, "3" = mod.3, "4" = mod.4, 
+                 "5" = mod.5, "6" = mod.6, "7" = mod.7)
 
-cbind(Sprk$tenure, stenure)
+aictab(mod_list)
+
+summary(mod.7)
+
+
+dispersion_test <- simulateResiduals(mod.7)
+plot(dispersion_test)
+
+
+library(glmmTMB)
+
+mod.7.nb1 <- glmmTMB(nsp ~ sncirc + snsurv + park + yr, data = Sprk, family = nbinom1)
+mod.7.nb2 <- glmmTMB(nsp ~ sncirc + snsurv + park + yr, data = Sprk, family = nbinom2)
+
+mod_list <- list("nb1" = mod.7.nb1, "nb2" = mod.7.nb2)
+
+aictab(mod_list)
+aictab(list(mod.7))
+
+dispersion_test <- simulateResiduals(mod.7.nb1)
+plot(dispersion_test)
+
+mod.7.nb1.ran <- glmmTMB(nsp ~ sncirc + snsurv + yr + (1 | park), data = Sprk, family = nbinom1)
+mod.7.nb1.ran2 <- glmmTMB(nsp ~ sncirc + snsurv + (yr | park), data = Sprk, family = nbinom1)
+
+mod_list <- list("ran1" = mod.7.nb1.ran, "ran2" = mod.7.nb1.ran2)
+aictab(mod_list)
+
+summary(mod.7.nb1)
+
+mod.7.nb1.short <- glmmTMB(nsp ~ snsurv + park + yr, data = Sprk, family = nbinom1)
+mod.7.nb1.short.ry <- glmmTMB(nsp ~ snsurv + park + (1 | yr), data = Sprk, family = nbinom1)
+mod.7.short.ry <- glmmTMB(nsp ~ snsurv + park + (1 | yr), data = Sprk, family = poisson)
+
+mod_gamma <- glm(nsp ~ snsurv + park + yr, data = Sprk, family = Gamma(link = "log"))
+
+library(tweedie)
+library(statmod)
+
+mod_tweedie <- glm(nsp ~ snsurv + park + yr, 
+                   family = tweedie(var.power = 1.5), 
+                   data = Sprk)
+
+summary(mod_tweedie)
+
+plot(mod_tweedie$fitted.values, residuals(mod_tweedie),
+     main = "Residuals vs Fitted", 
+     xlab = "Fitted Values", 
+     ylab = "Residuals")
+abline(h = 0, col = "red")
+
+qqnorm(residuals(mod_tweedie))
+qqline(residuals(mod_tweedie), col = "red")
+
+deviance(mod_tweedie) / df.residual(mod_tweedie)
 
 library(mgcv)
 
-AIC(mod.null, mod.1, mod.2, mod.3, mod.4, mod.5, mod.6, mod.7)
+AIC(mod.null, mod.7, mod.7.nb1, mod.7.nb1.ran, mod.7.nb1.short, mod.7.nb1.short.ry, mod.7.short.ry, mod_gamma, mod_tweedie)
+
+
+dispersion_test <- simulateResiduals(mod_tweedie)
+plot(dispersion_test)
+
+ggplot(Sprk, aes(x = yr, y = nsp, color = park)) +
+  geom_line()
 
 ## most support for mod.5. Effect size of scaled tenure = 29.289 per unit increase
 
@@ -370,4 +401,300 @@ ggplot(nsp.predict, aes(x = tenure / 365, y = nsp)) +
   theme_bcs()
 
 
+
+library(vegan)
+
+focal.parks <- c("Carkeek Park", "Discovery Park", "Genesee Park", "Golden Gardens Park", "Lake Forest Park", 
+                 "Magnuson Park", "Seward Park", "Washington Park Arboretum")
+
+srm <- dat %>% 
+  filter(!str_detect(species, pattern = " x | sp\\.|Spotted Owl"),
+         year %in% c(2005:2019, 2021, 2022, 2023)) %>%
+  mutate(observed = seen + heard + fly) %>% 
+  group_by(park, year, station.code, bird.code) %>%
+  summarise(count = sum(observed), .groups = "drop") %>%
+  pivot_wider(names_from = bird.code, values_from = count, values_fill = 0)
+
+srm.focal <- srm %>% filter(park %in% focal.parks)
+
+
+year.list <- list()
+for(i in 1:length(focal.parks)){
+  year.list[[i]] <- sort(unique(srm.focal[srm.focal$park == focal.parks[i], ]$year))
+}
+
+names(year.list) <- focal.parks
+
+dat.list <- list()
+
+for(i in 1:length(focal.parks)){
+  
+  for(y in year.list[[focal.parks[i]]]) {
+    
+    subset_data <- srm.focal %>% filter(park == focal.parks[i] & year == y) %>% select(-park, -year, -station.code)
+    
+    dat.list[[paste0(focal.parks[i], "-", y)]] <- subset_data
+  }
+}
+
+richness.estimates <- list()
+
+for(i in 1:length(dat.list)){
+  est <- specpool(dat.list[[i]])
+  richness.estimates[[names(dat.list[i])]] <- est
+}
+
+combined_estimates <- bind_rows(richness.estimates)
+head(combined_estimates)
+
+combined_estimates$park.year <- names(dat.list)
+
+combined_estimates.df <- combined_estimates %>%
+  separate(park.year, into = c("park", "year"), sep = "-") %>%
+  mutate(bootLower = boot - 1.96 * boot.se,
+         bootUpper = boot + 1.96 * boot.se,
+         year = as.numeric(year))
+
+plot.df <- combined_estimates.df %>%
+  select(-grep("\\.se|^n$|Lower|Upper", colnames(.))) %>%
+  pivot_longer(cols = c(boot, chao, jack1, jack2, Species),
+               names_to = "estimator",
+               values_to = "richness_estimate")
+
+plot.df[plot.df$estimator == "Species", ]$estimator <- "Observed richness"
+plot.df[plot.df$estimator == "boot", ]$estimator <- "Bootstrapped estimate"
+plot.df[plot.df$estimator == "chao", ]$estimator <- "Chao1 estimate"
+plot.df[plot.df$estimator == "jack1", ]$estimator <- "First-order jackknife estimate"
+plot.df[plot.df$estimator == "jack2", ]$estimator <- "Second-order jackknife estimate"
+
+plot.df$estimator <- factor(plot.df$estimator, levels = c("Observed richness", "Chao1 estimate", 
+                                                          "First-order jackknife estimate", "Second-order jackknife estimate",
+                                                          "Bootstrapped estimate"))
+
+# panel plot of species richness measures over time at focal parks
+
+ggplot() +
+  geom_col(data = plot.df %>% filter(estimator == "Observed richness"), 
+           aes(x = year, y = richness_estimate, group = interaction(park, estimator), 
+               fill = estimator)) +
+  geom_line(data = plot.df %>% filter(estimator != "Observed richness"), 
+            aes(x = year, y = richness_estimate, group = interaction(park, estimator), 
+                color = estimator), size = 1, alpha = 0.8) +
+  scale_color_manual(name = "Measure",
+                     values = c("Chao1 estimate" = "#36BA3A", 
+                                "First-order jackknife estimate" = "#FFB98C", 
+                                "Second-order jackknife estimate" = "#0A3C23",
+                                "Bootstrapped estimate"= "#E6FF55")) +
+  scale_fill_manual(name = element_blank(),
+                    values = c("Observed richness" = "#0A3C23")) + 
+  scale_y_continuous(expand = expansion(mult = c(0, 0.3))) +
+  facet_wrap(~ park) +
+  labs(title = "Estimates of species richness over time", y = "Number of species", x = "Year") +
+  theme_bcs() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+##
+
+plot(y = combined_estimates.df$jack1, x = combined_estimates.df$year)
+
+combined_estimates.df$yr <- as.numeric(scale(combined_estimates.df$year))
+
+
+mod.null <- glm(round(jack1, 0) ~ 1, data = combined_estimates.df, family = poisson)
+mod.1 <- glm(round(jack1, 0) ~ yr + park, data = combined_estimates.df, family = poisson) 
+mod_qp <- glm(round(jack1, 0) ~ year + park, family = quasipoisson, data = combined_estimates.df)
+
+summary(mod.null)
+summary(mod.1)
+summary(mod_qp)
+
+
+dispersion <- sum(residuals(mod.1, type = "pearson")^2) / mod.1$df.residual
+
+#slight UNDERdispersion
+
+combined_estimates.df$residuals <- residuals(mod.1, type = "pearson")  # Pearson residuals
+combined_estimates.df$fitted <- fitted(mod.1)  # Fitted values
+
+ggplot(combined_estimates.df, aes(x = fitted, y = residuals)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  theme_minimal() +
+  labs(x = "Fitted Values", y = "Pearson Residuals", title = "Residual vs. Fitted Plot")
+
+
+ggplot(combined_estimates.df, aes(x = residuals)) +
+  geom_histogram(binwidth = 0.5, fill = "blue", alpha = 0.5, color = "black") +
+  theme_minimal() +
+  labs(x = "Residuals", y = "Frequency", title = "Histogram of Residuals")
+
+mod.2 <- glmmTMB(round(jack1, 0) ~ yr + park + (yr | park),
+                 data = combined_estimates.df, family = poisson)
+
+
+summary(mod.1)
+
+combined_estimates.df$park <- as.factor(combined_estimates.df$park)
+
+# Create a new data frame for prediction
+predict_data <- expand.grid(
+  yr = seq(min(combined_estimates.df$yr), max(combined_estimates.df$yr), length.out = 100),
+  park = levels(combined_estimates.df$park)
+)
+
+# Generate predictions on the link scale (logit)
+predicted <- predict(mod.1, newdata = predict_data, type = "link", se.fit = TRUE)
+
+# Convert predictions to a data frame and transform back to response scale
+predicted_df <- cbind(predict_data, mu = predicted$fit, se = predicted$se.fit) %>%
+  mutate(
+    lower = exp(mu - 1.96 * se),
+    upper = exp(mu + 1.96 * se),
+    mu = exp(mu)
+  )
+
+mean_predicted <- predicted_df %>%
+  group_by(yr) %>%
+  summarize(mean_mu = mean(mu),
+            mean_lower = mean(lower),
+            mean_upper = mean(upper))
+
+mean_predicted$year <- (mean_predicted$yr * year_sd) + year_mean
+
+year_mean <- mean(combined_estimates.df$year)
+year_sd <- sd(combined_estimates.df$year)
+
+
+combined_mean <- combined_estimates.df %>%
+  group_by(year) %>%
+  summarise(mean_jack = mean(jack1), .groups = "drop")
+
+ggplot(combined_mean, aes(x = year, y = mean_jack)) +
+  geom_point(alpha = .8, size = 2, color = bcs_colors["dark green"]) + 
+  geom_line(data = mean_predicted, aes(x = year, y = mean_mu), color = bcs_colors["dark green"]) +
+  geom_ribbon(data = mean_predicted, aes(x = year, ymin = mean_lower, ymax = mean_upper), 
+              alpha = 0.2, fill = bcs_colors["dark green"], inherit.aes = FALSE) + 
+  labs(title = "Trend in species richness over time", y = "Estimated mean number of species at NBP sites", 
+       x = "Year") +
+  theme_bcs()
+
+beta_per_year <- summary(mod.1)$coefficients["yr", "Estimate"] / year_sd
+se_per_year <- summary(mod.1)$coefficients["yr", "Std. Error"] / year_sd
+
+
+mean_year_effect <- exp(beta_per_year)
+upper_year_effect <- exp(beta_per_year + 1.96 * se_per_year)
+lower_year_effect <- exp(beta_per_year - 1.96 * se_per_year)
+
+
+## NOTE: You can run the models on each of the different estimates; always a small but significant
+## negative trend
+
+mod.null <- glm(round(boot, 0) ~ 1, data = combined_estimates.df, family = poisson)
+mod.1 <- glm(round(boot, 0) ~ yr + park, data = combined_estimates.df, family = poisson) 
+mod_qp <- glm(round(boot, 0) ~ yr + park, family = quasipoisson, data = combined_estimates.df)
+
+summary(mod.null)
+summary(mod.1)
+summary(mod_qp)
+
+
+dispersion <- sum(residuals(mod.1, type = "pearson")^2) / mod.1$df.residual
+
+#slight UNDERdispersion
+
+combined_estimates.df$residuals <- residuals(mod.1, type = "pearson")  # Pearson residuals
+combined_estimates.df$fitted <- fitted(mod.1)  # Fitted values
+
+ggplot(combined_estimates.df, aes(x = fitted, y = residuals)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  theme_minimal() +
+  labs(x = "Fitted Values", y = "Pearson Residuals", title = "Residual vs. Fitted Plot")
+
+
+ggplot(combined_estimates.df, aes(x = residuals)) +
+  geom_histogram(binwidth = 0.5, fill = "blue", alpha = 0.5, color = "black") +
+  theme_minimal() +
+  labs(x = "Residuals", y = "Frequency", title = "Histogram of Residuals")
+
+mod.2 <- glmmTMB(round(jack1, 0) ~ yr + park + (yr | park),
+                 data = combined_estimates.df, family = poisson)
+
+
+summary(mod.1)
+
+combined_estimates.df$park <- as.factor(combined_estimates.df$park)
+
+# Create a new data frame for prediction
+predict_data <- expand.grid(
+  yr = seq(min(combined_estimates.df$yr), max(combined_estimates.df$yr), length.out = 100),
+  park = levels(combined_estimates.df$park)
+)
+
+# Generate predictions on the link scale (logit)
+predicted <- predict(mod.1, newdata = predict_data, type = "link", se.fit = TRUE)
+
+# Convert predictions to a data frame and transform back to response scale
+predicted_df <- cbind(predict_data, mu = predicted$fit, se = predicted$se.fit) %>%
+  mutate(
+    lower = exp(mu - 1.96 * se),
+    upper = exp(mu + 1.96 * se),
+    mu = exp(mu)
+  )
+
+mean_predicted <- predicted_df %>%
+  group_by(yr) %>%
+  summarize(mean_mu = mean(mu),
+            mean_lower = mean(lower),
+            mean_upper = mean(upper))
+
+mean_predicted$year <- (mean_predicted$yr * year_sd) + year_mean
+
+year_mean <- mean(combined_estimates.df$year)
+year_sd <- sd(combined_estimates.df$year)
+
+
+combined_mean <- combined_estimates.df %>%
+  group_by(year) %>%
+  summarise(mean_jack = mean(jack1), .groups = "drop")
+
+p.S_trend <- ggplot(combined_mean, aes(x = year, y = mean_jack)) +
+  geom_point(alpha = .8, size = 1, color = bcs_colors["dark green"]) + 
+  geom_line(data = mean_predicted, aes(x = year, y = mean_mu), color = bcs_colors["dark green"]) +
+  geom_ribbon(data = mean_predicted, aes(x = year, ymin = mean_lower, ymax = mean_upper), 
+              alpha = 0.2, fill = bcs_colors["dark green"], inherit.aes = FALSE) + 
+  labs(title = "Average species richness at NBP sites over time", y = "Average number of species at NBP sites (first-order jackknife estimate)", 
+       x = "Year") +
+  theme_bcs()
+
+png("results/figures/02_average_species_richness_over_time.png", width = 4, height = 4, units = "in", res = 300)
+p.S_trend
+dev.off()
+
+beta_per_year <- summary(mod.1)$coefficients["yr", "Estimate"] / year_sd
+se_per_year <- summary(mod.1)$coefficients["yr", "Std. Error"] / year_sd
+
+
+mean_year_effect <- exp(beta_per_year)
+upper_year_effect <- exp(beta_per_year + 1.96 * se_per_year)
+lower_year_effect <- exp(beta_per_year - 1.96 * se_per_year)
+
+total_change <- mean_year_effect^18
+upper_change <- upper_year_effect^18
+lower_change <- lower_year_effect^18
+
+# Calculate the percentage change
+percentage_change <- (total_change - 1) * 100
+upper_percentage_change <- (upper_change - 1) * 100
+lower_percentage_change <- (lower_change - 1) * 100
+
+# Print the result
+cat("Over the period of 2005 to 2023, we estimate average species richness at study locations to have changed by", 
+    round(percentage_change, 2), "%, with a 95% confidence interval of [", 
+    round(lower_percentage_change, 2), "%, ", round(upper_percentage_change, 2), "%].\n")
+
+
+                     
 ########## END ###########

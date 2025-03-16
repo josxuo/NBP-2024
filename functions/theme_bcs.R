@@ -2,6 +2,15 @@
 ### BCS theme ###
 #################
 
+bcs_colors <- c(
+  "dark green" = "#0A3C23",
+  "cream" = "#FAF5F0",
+  "yellow green" = "#E6FF55",
+  "peach" = "#FFB98C",
+  "bright green" = "#36BA3A"
+)
+
+
 theme_bcs <- function() {
   theme(
     # backgrounds
@@ -14,7 +23,8 @@ theme_bcs <- function() {
     text = element_text(color = "#0A3C23"),
     axis.text = element_text(color = "#0A3C23", family = "Archivo", size = 15),
     axis.title = element_text(color = "#0A3C23", family = "connectdisplay", size = 18),
-    plot.title = element_text(color = "#0A3C23", , family = "connectdisplay", size = 28),
+    plot.title = element_text(color = "#0A3C23", , family = "connectdisplay", 
+                              hjust = 0.5, size = 28),
     plot.subtitle = element_text(color = "#0A3C23", family = "Archivo-Italic", size = 22),
     plot.caption = element_text(color = "#0A3C23", family = "Archivo", size = 12),
     
@@ -24,13 +34,17 @@ theme_bcs <- function() {
     panel.border = element_rect(color = "#0A3C23", fill = NA),
     
     # legends
+    legend.position = "right",
+    legend.justification = "top",
+    legend.box = "vertical",
+    legend.box.spacing = unit(0.5, "cm"),
     legend.background = element_rect(color = "white"),
     legend.key = element_rect(fill = "white"),
-    legend.text = element_text(color = "#0A3C23"),
-    legend.title = element_text(color = "#0A3C23"),
+    legend.text = element_text(color = "#0A3C23", family = "Archivo", size = 12),
+    legend.title = element_text(color = "#0A3C23", family = "connectdisplay", size = 15),
     
     # facets
     strip.background = element_rect(fill = "white"),
-    strip.text = element_text(color = "#0A3C23", face = "bold")
+    strip.text = element_text(color = "#0A3C23", family = "connectdisplay", size = 15)
   )
 }
