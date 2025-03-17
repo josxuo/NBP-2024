@@ -165,24 +165,26 @@ dunr <- dat %>% filter(str_detect(species, pattern = " sp\\.")) %>%
   group_by(species) %>%
   summarise(n = n()) %>%
   ungroup() %>%
-  mutate(species = fct_reorder(species, n))
+  mutate(species = fct_reorder(species, desc(n)))
 
-library(ggbreak)
 
-punr <- ggplot(dunr, aes(x = species, y = n)) + 
+punr <- ggplot(slice_max(dunr, order_by = n, n = 15), aes(x = species, y = n)) + 
   geom_col(fill = bcs_colors["dark green"]) +
-  coord_flip() +
-  labs(title = "NBP observations not identified to species level", y = "Number of times reported", x = "") +
-  #scale_y_break(c(270, 1350), expand = expansion(mult = c(0, 0))) +  # Adjust expansion to remove space
-  scale_y_continuous(limits = c(0, 1400), breaks = seq(0, 1400, by = 50), 
-                     expand = expansion(mult = c(0, 0)), position = "left") + 
+  labs(title = "NBP observations not identified to species level", y = "Number of times reported", x = "") + 
+  scale_y_continuous(breaks = seq(0, 1400, by = 50), expand = c(0, .2), limits = c(0, 1425)) +
   theme_bcs() +
   theme(
-    panel.grid.major.y = element_blank()  # Remove unnecessary grid lines
-  )
+    #panel.grid.major.y = element_blank(),
+    axis.text.x = element_text(angle = 60, 
+                               hjust = 1, 
+                               margin = margin(t = 2, r = 0, b = 0, l = 0, unit = "pt")))
 
 punr
 
+
+png("results/figures/02_spuh_reports.png", width = 4, height = 4.5, unit = "in", res = 300)
+punr
+dev.off()
 
 ### print plot
 # pdf("figures/02_sp._reports.pdf", width = 11, height = 7)
@@ -282,134 +284,16 @@ pmeanS
 # print(pmeanS)
 # dev.off()
 
-## Details survey history and effort at each location
-history <- dat %>% group_by(park, year) %>% 
-  summarise(first = min(survey_date), last = max(survey_date), ncirc = n_distinct(station.code), 
-          nsurv = n_distinct(survey_id), .groups = "drop") %>%
-  mutate(park.year = paste(park, year, sep = "-")) %>%
-  select(park.year, first, last, ncirc, nsurv)
-
-write.csv(history, "results/survey_history_by_park.csv", row.names = FALSE)
-
-## NOTE Magnuson has the weird station IDs
-
-unique(dat[dat$park == "Magnuson Park", ]$station.code)
-
-## is species richness correlated with longer survey history?
-Sprk <- dat %>% 
-  filter(!str_detect(species, pattern = " x | sp\\.|Spotted Owl")) %>%
-  group_by(park, year) %>% 
-  summarise(nsp = n_distinct(species), .groups = "drop") %>% 
-  mutate(park.year = paste(park, year, sep = "-")) %>%
-  left_join(., history, join_by("park.year" == "park.year")) %>% 
-  mutate(tenure = as.numeric(last - first))
-
-
-view(history)
-Sprk$sncirc <- as.numeric(scale(Sprk$ncirc))
-Sprk$snsurv <- as.numeric(scale(Sprk$nsurv))
-Sprk$yr <- Sprk$year - min(Sprk$year)
-
-mod.null <- glm(nsp ~ 1, data = Sprk, family = poisson)
-mod.1 <- glm(nsp ~ park, data = Sprk, family = poisson)
-mod.2 <- glm(nsp ~ park + yr, data = Sprk, family = poisson)
-mod.3 <- glm(nsp ~ sncirc, data = Sprk, family = poisson)
-mod.4 <- glm(nsp ~ snsurv, data = Sprk, family = poisson)
-mod.5 <- glm(nsp ~ sncirc + snsurv, data = Sprk, family = poisson)
-mod.6 <- glm(nsp ~ sncirc + snsurv + park, data = Sprk, family = poisson)
-mod.7 <- glm(nsp ~ sncirc + snsurv + park + yr, data = Sprk, family = poisson)
-
-mod_list <- list("null" = mod.null, "1" = mod.1, "2" = mod.2, "3" = mod.3, "4" = mod.4, 
-                 "5" = mod.5, "6" = mod.6, "7" = mod.7)
-
-aictab(mod_list)
-
-summary(mod.7)
-
-
-dispersion_test <- simulateResiduals(mod.7)
-plot(dispersion_test)
-
-
-library(glmmTMB)
-
-mod.7.nb1 <- glmmTMB(nsp ~ sncirc + snsurv + park + yr, data = Sprk, family = nbinom1)
-mod.7.nb2 <- glmmTMB(nsp ~ sncirc + snsurv + park + yr, data = Sprk, family = nbinom2)
-
-mod_list <- list("nb1" = mod.7.nb1, "nb2" = mod.7.nb2)
-
-aictab(mod_list)
-aictab(list(mod.7))
-
-dispersion_test <- simulateResiduals(mod.7.nb1)
-plot(dispersion_test)
-
-mod.7.nb1.ran <- glmmTMB(nsp ~ sncirc + snsurv + yr + (1 | park), data = Sprk, family = nbinom1)
-mod.7.nb1.ran2 <- glmmTMB(nsp ~ sncirc + snsurv + (yr | park), data = Sprk, family = nbinom1)
-
-mod_list <- list("ran1" = mod.7.nb1.ran, "ran2" = mod.7.nb1.ran2)
-aictab(mod_list)
-
-summary(mod.7.nb1)
-
-mod.7.nb1.short <- glmmTMB(nsp ~ snsurv + park + yr, data = Sprk, family = nbinom1)
-mod.7.nb1.short.ry <- glmmTMB(nsp ~ snsurv + park + (1 | yr), data = Sprk, family = nbinom1)
-mod.7.short.ry <- glmmTMB(nsp ~ snsurv + park + (1 | yr), data = Sprk, family = poisson)
-
-mod_gamma <- glm(nsp ~ snsurv + park + yr, data = Sprk, family = Gamma(link = "log"))
-
-library(tweedie)
-library(statmod)
-
-mod_tweedie <- glm(nsp ~ snsurv + park + yr, 
-                   family = tweedie(var.power = 1.5), 
-                   data = Sprk)
-
-summary(mod_tweedie)
-
-plot(mod_tweedie$fitted.values, residuals(mod_tweedie),
-     main = "Residuals vs Fitted", 
-     xlab = "Fitted Values", 
-     ylab = "Residuals")
-abline(h = 0, col = "red")
-
-qqnorm(residuals(mod_tweedie))
-qqline(residuals(mod_tweedie), col = "red")
-
-deviance(mod_tweedie) / df.residual(mod_tweedie)
-
-library(mgcv)
-
-AIC(mod.null, mod.7, mod.7.nb1, mod.7.nb1.ran, mod.7.nb1.short, mod.7.nb1.short.ry, mod.7.short.ry, mod_gamma, mod_tweedie)
-
-
-dispersion_test <- simulateResiduals(mod_tweedie)
-plot(dispersion_test)
-
-ggplot(Sprk, aes(x = yr, y = nsp, color = park)) +
-  geom_line()
-
-## most support for mod.5. Effect size of scaled tenure = 29.289 per unit increase
-
-# to convert effect size to years, divide by stdv of tenure and multiple by 365 days
-29.289 / sd(Sprk$tenure) * 365
-
-ggplot(nsp.predict, aes(x = tenure / 365, y = nsp)) +
-  geom_point(color = bcs_colors["dark green"], size = 2) +
-  geom_smooth(method = "lm", fill = bcs_colors["peach"], color = bcs_colors["dark green"]) + 
-  labs(x = "Years surveyed", y = "Cumulative species richness", title = "Cumulative speices reported", subtitle = "vs. number of years surveyed") +
-  theme_bcs()
-
-
 
 library(vegan)
 
-focal.parks <- c("Carkeek Park", "Discovery Park", "Genesee Park", "Golden Gardens Park", "Lake Forest Park", 
+focal.parks <- c("Carkeek Park", "Discovery Park", "Genesee Park", "Golden Gardens Park", 
                  "Magnuson Park", "Seward Park", "Washington Park Arboretum")
 
 srm <- dat %>% 
-  filter(!str_detect(species, pattern = " x | sp\\.|Spotted Owl"),
-         year %in% c(2005:2019, 2021, 2022, 2023)) %>%
+  filter(!str_detect(species, pattern = " x | sp\\.|Spotted Owl|Domestic"),
+         year %in% c(2005:2019, 2021, 2022, 2023),
+         station.code %in% covs$station.code) %>%
   mutate(observed = seen + heard + fly) %>% 
   group_by(park, year, station.code, bird.code) %>%
   summarise(count = sum(observed), .groups = "drop") %>%
@@ -442,6 +326,241 @@ richness.estimates <- list()
 for(i in 1:length(dat.list)){
   est <- specpool(dat.list[[i]])
   richness.estimates[[names(dat.list[i])]] <- est
+}
+
+combined_estimates <- bind_rows(richness.estimates)
+head(combined_estimates)
+
+combined_estimates$park.year <- names(dat.list)
+
+combined_estimates.df <- combined_estimates %>%
+  separate(park.year, into = c("park", "year"), sep = "-") %>%
+  mutate(year = as.numeric(year))
+
+plot.df <- combined_estimates.df %>%
+  select(-grep("\\.se|^n$|Lower|Upper", colnames(.))) %>%
+  pivot_longer(cols = c(boot, chao, jack1, jack2, Species),
+               names_to = "estimator",
+               values_to = "richness_estimate")
+
+plot.df[plot.df$estimator == "Species", ]$estimator <- "Observed richness"
+plot.df[plot.df$estimator == "boot", ]$estimator <- "Bootstrapped estimate"
+plot.df[plot.df$estimator == "chao", ]$estimator <- "Chao1 estimate"
+plot.df[plot.df$estimator == "jack1", ]$estimator <- "First-order jackknife estimate"
+plot.df[plot.df$estimator == "jack2", ]$estimator <- "Second-order jackknife estimate"
+
+plot.df$estimator <- factor(plot.df$estimator, levels = c("Observed richness", "Chao1 estimate", 
+                                                          "First-order jackknife estimate", "Second-order jackknife estimate",
+                                                          "Bootstrapped estimate"))
+
+# panel plot of species richness measures over time at focal parks
+
+p.park_ests_over_time <- ggplot() +
+  geom_col(data = plot.df %>% filter(estimator == "Observed richness"), 
+           aes(x = year, y = richness_estimate, group = interaction(park, estimator), 
+               fill = estimator)) +
+  geom_line(data = plot.df %>% filter(estimator != "Observed richness"), 
+            aes(x = year, y = richness_estimate, group = interaction(park, estimator), 
+                color = estimator), size = 0.5, alpha = 0.8) +
+  scale_color_manual(name = "Measure",
+                     values = c("Chao1 estimate" = "#36BA3A", 
+                                "First-order jackknife estimate" = "#FFB98C", 
+                                "Second-order jackknife estimate" = "#0A3C23",
+                                "Bootstrapped estimate"= "#E6FF55")) +
+  scale_fill_manual(name = element_blank(),
+                    values = c("Observed richness" = "#0A3C23")) + 
+  scale_y_continuous(expand = expansion(mult = c(0, 0)),
+                     limits = c(0, 180)) +
+  facet_wrap(~ park, ncol = 4, nrow = 2) +
+  labs(title = "Estimates of species richness over time", y = "Number of species", x = "Year") +
+  theme_bcs() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.spacing = unit(-1, "lines"),
+        legend.key.size = unit(0.8, "lines"))
+
+png(filename = "results/figures/02_estimates_spp_richness_over_time_by_park.png",
+    width = 7, height = 4, units = "in", res = 300)
+p.park_ests_over_time
+dev.off()
+
+## try other estimators
+
+plot(y = combined_estimates.df$jack1, x = combined_estimates.df$year)
+
+combined_estimates.df$yr <- as.numeric(scale(combined_estimates.df$year))
+
+
+mod.null <- glm(round(jack1, 0) ~ 1, data = combined_estimates.df, family = poisson)
+mod.1 <- glm(round(jack1, 0) ~ yr + park, data = combined_estimates.df, family = poisson) 
+mod_qp <- glm(round(jack1, 0) ~ year + park, family = quasipoisson, data = combined_estimates.df)
+
+summary(mod.null)
+summary(mod.1)
+summary(mod_qp)
+
+
+dispersion <- sum(residuals(mod.1, type = "pearson")^2) / mod.1$df.residual
+
+#slight UNDERdispersion
+
+
+## NOTE: You can run the models on each of the different estimates; always a small but significant
+## negative trend
+
+
+# Create a new data frame for prediction
+predict_data <- expand.grid(
+  yr = seq(min(combined_estimates.df$yr), max(combined_estimates.df$yr), length.out = 100),
+  park = levels(as.factor(combined_estimates.df$park))
+)
+
+# Generate predictions on the link scale (logit)
+predicted <- predict(mod.1, newdata = predict_data, type = "link", se.fit = TRUE)
+
+# Convert predictions to a data frame and transform back to response scale
+predicted_df <- cbind(predict_data, mu = predicted$fit, se = predicted$se.fit) %>%
+  mutate(
+    lower = exp(mu - 1.96 * se),
+    upper = exp(mu + 1.96 * se),
+    mu = exp(mu)
+  )
+
+
+ggplot() +
+  geom_col(data = combined_estimates.df, aes(x = yr, y = Species)) +
+  geom_line(data = predicted_df, aes(x = yr, y = mu)) +
+  geom_ribbon(data = predicted_df, aes(x = yr, ymin = lower, ymax = upper), 
+              alpha = 0.2, fill = bcs_colors["dark green"], inherit.aes = FALSE) +
+  facet_wrap(~ park)
+
+mean_predicted <- predicted_df %>%
+  group_by(yr) %>%
+  summarize(mean_mu = mean(mu),
+            mean_lower = mean(lower),
+            mean_upper = mean(upper))
+
+mean_predicted$year <- (mean_predicted$yr * year_sd) + year_mean
+
+year_mean <- mean(combined_estimates.df$year)
+year_sd <- sd(combined_estimates.df$year)
+
+
+combined_mean <- combined_estimates.df %>%
+  group_by(year) %>%
+  summarise(mean_jack = mean(jack1), .groups = "drop")
+
+p.S_trend <- ggplot(combined_mean, aes(x = year, y = mean_jack)) +
+  geom_point(alpha = .8, size = 1, color = bcs_colors["dark green"]) + 
+  geom_line(data = mean_predicted, aes(x = year, y = mean_mu), color = bcs_colors["dark green"]) +
+  geom_ribbon(data = mean_predicted, aes(x = year, ymin = mean_lower, ymax = mean_upper), 
+              alpha = 0.2, fill = bcs_colors["dark green"], inherit.aes = FALSE) + 
+  labs(title = "Average species richness at NBP sites over time", y = "Average number of species at NBP sites (first-order jackknife estimate)", 
+       x = "Year") +
+  theme_bcs()
+
+png("results/figures/02_average_species_richness_over_time.png", width = 4, height = 4, units = "in", res = 300)
+p.S_trend
+dev.off()
+
+beta_per_year <- summary(mod.1)$coefficients["yr", "Estimate"] / year_sd
+se_per_year <- summary(mod.1)$coefficients["yr", "Std. Error"] / year_sd
+
+
+mean_year_effect <- exp(beta_per_year)
+upper_year_effect <- exp(beta_per_year + 1.96 * se_per_year)
+lower_year_effect <- exp(beta_per_year - 1.96 * se_per_year)
+
+total_change <- mean_year_effect^18
+upper_change <- upper_year_effect^18
+lower_change <- lower_year_effect^18
+
+# Calculate the percentage change
+percentage_change <- (total_change - 1) * 100
+upper_percentage_change <- (upper_change - 1) * 100
+lower_percentage_change <- (lower_change - 1) * 100
+
+# Print the result
+cat("Over the period of 2005 to 2023, we estimate average species richness at study locations to have changed by", 
+    round(percentage_change, 2), "%, with a 95% confidence interval of [", 
+    round(lower_percentage_change, 2), "%, ", round(upper_percentage_change, 2), "%].\n")
+
+
+
+## test early vs late estimates of diversity ###
+
+focal.parks <- c("Carkeek Park", "Discovery Park", "Genesee Park", "Golden Gardens Park", 
+                 "Magnuson Park", "Seward Park", "Washington Park Arboretum")
+
+srm.early <- dat %>% 
+  filter(!str_detect(species, pattern = " x | sp\\.|Spotted Owl|Domestic"),
+         year %in% c(2005:2015),
+         park %in% focal.parks,
+         station.code %in% covs$station.code) %>%
+  mutate(observed = seen + heard + fly) %>% 
+  group_by(park, year, station.code, bird.code) %>%
+  summarise(count = sum(observed), .groups = "drop") %>%
+  pivot_wider(names_from = bird.code, values_from = count, values_fill = 0)
+
+
+srm.late <- dat %>% 
+  filter(!str_detect(species, pattern = " x | sp\\.|Spotted Owl|Domestic"),
+         year %in% c(2016:2019, 2021:2023),
+         park %in% focal.parks,
+         station.code %in% covs$station.code) %>%
+  mutate(observed = seen + heard + fly) %>% 
+  group_by(park, year, station.code, bird.code) %>%
+  summarise(count = sum(observed), .groups = "drop") %>%
+  pivot_wider(names_from = bird.code, values_from = count, values_fill = 0)
+
+year.list.early <- list()
+for(i in 1:length(focal.parks)){
+  year.list.early[[i]] <- sort(unique(srm.early[srm.early$park == focal.parks[i], ]$year))
+}
+
+names(year.list.early) <- focal.parks
+
+year.list.late <- list()
+for(i in 1:length(focal.parks)){
+  year.list.late[[i]] <- sort(unique(srm.late[srm.late$park == focal.parks[i], ]$year))
+}
+
+names(year.list.late) <- focal.parks
+
+
+
+
+
+dat.list.early <- list()
+
+for(i in 1:length(focal.parks)){
+  
+  for(y in year.list.early[[focal.parks[i]]]) {
+    
+    subset_data <- srm.early %>% filter(park == focal.parks[i] & year == y) %>% select(-park, -year, -station.code)
+    
+    dat.list.early[[paste0(focal.parks[i], "-", y)]] <- subset_data
+  }
+}
+
+
+dat.list.late <- list()
+
+for(i in 1:length(focal.parks)){
+  
+  for(y in year.list.late[[focal.parks[i]]]) {
+    
+    subset_data <- srm.late %>% filter(park == focal.parks[i] & year == y) %>% select(-park, -year, -station.code)
+    
+    dat.list.late[[paste0(focal.parks[i], "-", y)]] <- subset_data
+  }
+}
+
+
+richness.estimates.early <- list()
+
+for(i in 1:length(dat.list.early)){
+  est <- specpool(dat.list.early[[i]])
+  richness.estimates.early[[names(dat.list[i])]] <- est
 }
 
 combined_estimates <- bind_rows(richness.estimates)
@@ -494,206 +613,6 @@ ggplot() +
   theme(plot.title = element_text(hjust = 0.5))
 
 
-##
-
-plot(y = combined_estimates.df$jack1, x = combined_estimates.df$year)
-
-combined_estimates.df$yr <- as.numeric(scale(combined_estimates.df$year))
-
-
-mod.null <- glm(round(jack1, 0) ~ 1, data = combined_estimates.df, family = poisson)
-mod.1 <- glm(round(jack1, 0) ~ yr + park, data = combined_estimates.df, family = poisson) 
-mod_qp <- glm(round(jack1, 0) ~ year + park, family = quasipoisson, data = combined_estimates.df)
-
-summary(mod.null)
-summary(mod.1)
-summary(mod_qp)
-
-
-dispersion <- sum(residuals(mod.1, type = "pearson")^2) / mod.1$df.residual
-
-#slight UNDERdispersion
-
-combined_estimates.df$residuals <- residuals(mod.1, type = "pearson")  # Pearson residuals
-combined_estimates.df$fitted <- fitted(mod.1)  # Fitted values
-
-ggplot(combined_estimates.df, aes(x = fitted, y = residuals)) +
-  geom_point(alpha = 0.5) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  theme_minimal() +
-  labs(x = "Fitted Values", y = "Pearson Residuals", title = "Residual vs. Fitted Plot")
-
-
-ggplot(combined_estimates.df, aes(x = residuals)) +
-  geom_histogram(binwidth = 0.5, fill = "blue", alpha = 0.5, color = "black") +
-  theme_minimal() +
-  labs(x = "Residuals", y = "Frequency", title = "Histogram of Residuals")
-
-mod.2 <- glmmTMB(round(jack1, 0) ~ yr + park + (yr | park),
-                 data = combined_estimates.df, family = poisson)
-
-
-summary(mod.1)
-
-combined_estimates.df$park <- as.factor(combined_estimates.df$park)
-
-# Create a new data frame for prediction
-predict_data <- expand.grid(
-  yr = seq(min(combined_estimates.df$yr), max(combined_estimates.df$yr), length.out = 100),
-  park = levels(combined_estimates.df$park)
-)
-
-# Generate predictions on the link scale (logit)
-predicted <- predict(mod.1, newdata = predict_data, type = "link", se.fit = TRUE)
-
-# Convert predictions to a data frame and transform back to response scale
-predicted_df <- cbind(predict_data, mu = predicted$fit, se = predicted$se.fit) %>%
-  mutate(
-    lower = exp(mu - 1.96 * se),
-    upper = exp(mu + 1.96 * se),
-    mu = exp(mu)
-  )
-
-mean_predicted <- predicted_df %>%
-  group_by(yr) %>%
-  summarize(mean_mu = mean(mu),
-            mean_lower = mean(lower),
-            mean_upper = mean(upper))
-
-mean_predicted$year <- (mean_predicted$yr * year_sd) + year_mean
-
-year_mean <- mean(combined_estimates.df$year)
-year_sd <- sd(combined_estimates.df$year)
-
-
-combined_mean <- combined_estimates.df %>%
-  group_by(year) %>%
-  summarise(mean_jack = mean(jack1), .groups = "drop")
-
-ggplot(combined_mean, aes(x = year, y = mean_jack)) +
-  geom_point(alpha = .8, size = 2, color = bcs_colors["dark green"]) + 
-  geom_line(data = mean_predicted, aes(x = year, y = mean_mu), color = bcs_colors["dark green"]) +
-  geom_ribbon(data = mean_predicted, aes(x = year, ymin = mean_lower, ymax = mean_upper), 
-              alpha = 0.2, fill = bcs_colors["dark green"], inherit.aes = FALSE) + 
-  labs(title = "Trend in species richness over time", y = "Estimated mean number of species at NBP sites", 
-       x = "Year") +
-  theme_bcs()
-
-beta_per_year <- summary(mod.1)$coefficients["yr", "Estimate"] / year_sd
-se_per_year <- summary(mod.1)$coefficients["yr", "Std. Error"] / year_sd
-
-
-mean_year_effect <- exp(beta_per_year)
-upper_year_effect <- exp(beta_per_year + 1.96 * se_per_year)
-lower_year_effect <- exp(beta_per_year - 1.96 * se_per_year)
-
-
-## NOTE: You can run the models on each of the different estimates; always a small but significant
-## negative trend
-
-mod.null <- glm(round(boot, 0) ~ 1, data = combined_estimates.df, family = poisson)
-mod.1 <- glm(round(boot, 0) ~ yr + park, data = combined_estimates.df, family = poisson) 
-mod_qp <- glm(round(boot, 0) ~ yr + park, family = quasipoisson, data = combined_estimates.df)
-
-summary(mod.null)
-summary(mod.1)
-summary(mod_qp)
-
-
-dispersion <- sum(residuals(mod.1, type = "pearson")^2) / mod.1$df.residual
-
-#slight UNDERdispersion
-
-combined_estimates.df$residuals <- residuals(mod.1, type = "pearson")  # Pearson residuals
-combined_estimates.df$fitted <- fitted(mod.1)  # Fitted values
-
-ggplot(combined_estimates.df, aes(x = fitted, y = residuals)) +
-  geom_point(alpha = 0.5) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  theme_minimal() +
-  labs(x = "Fitted Values", y = "Pearson Residuals", title = "Residual vs. Fitted Plot")
-
-
-ggplot(combined_estimates.df, aes(x = residuals)) +
-  geom_histogram(binwidth = 0.5, fill = "blue", alpha = 0.5, color = "black") +
-  theme_minimal() +
-  labs(x = "Residuals", y = "Frequency", title = "Histogram of Residuals")
-
-mod.2 <- glmmTMB(round(jack1, 0) ~ yr + park + (yr | park),
-                 data = combined_estimates.df, family = poisson)
-
-
-summary(mod.1)
-
-combined_estimates.df$park <- as.factor(combined_estimates.df$park)
-
-# Create a new data frame for prediction
-predict_data <- expand.grid(
-  yr = seq(min(combined_estimates.df$yr), max(combined_estimates.df$yr), length.out = 100),
-  park = levels(combined_estimates.df$park)
-)
-
-# Generate predictions on the link scale (logit)
-predicted <- predict(mod.1, newdata = predict_data, type = "link", se.fit = TRUE)
-
-# Convert predictions to a data frame and transform back to response scale
-predicted_df <- cbind(predict_data, mu = predicted$fit, se = predicted$se.fit) %>%
-  mutate(
-    lower = exp(mu - 1.96 * se),
-    upper = exp(mu + 1.96 * se),
-    mu = exp(mu)
-  )
-
-mean_predicted <- predicted_df %>%
-  group_by(yr) %>%
-  summarize(mean_mu = mean(mu),
-            mean_lower = mean(lower),
-            mean_upper = mean(upper))
-
-mean_predicted$year <- (mean_predicted$yr * year_sd) + year_mean
-
-year_mean <- mean(combined_estimates.df$year)
-year_sd <- sd(combined_estimates.df$year)
-
-
-combined_mean <- combined_estimates.df %>%
-  group_by(year) %>%
-  summarise(mean_jack = mean(jack1), .groups = "drop")
-
-p.S_trend <- ggplot(combined_mean, aes(x = year, y = mean_jack)) +
-  geom_point(alpha = .8, size = 1, color = bcs_colors["dark green"]) + 
-  geom_line(data = mean_predicted, aes(x = year, y = mean_mu), color = bcs_colors["dark green"]) +
-  geom_ribbon(data = mean_predicted, aes(x = year, ymin = mean_lower, ymax = mean_upper), 
-              alpha = 0.2, fill = bcs_colors["dark green"], inherit.aes = FALSE) + 
-  labs(title = "Average species richness at NBP sites over time", y = "Average number of species at NBP sites (first-order jackknife estimate)", 
-       x = "Year") +
-  theme_bcs()
-
-png("results/figures/02_average_species_richness_over_time.png", width = 4, height = 4, units = "in", res = 300)
-p.S_trend
-dev.off()
-
-beta_per_year <- summary(mod.1)$coefficients["yr", "Estimate"] / year_sd
-se_per_year <- summary(mod.1)$coefficients["yr", "Std. Error"] / year_sd
-
-
-mean_year_effect <- exp(beta_per_year)
-upper_year_effect <- exp(beta_per_year + 1.96 * se_per_year)
-lower_year_effect <- exp(beta_per_year - 1.96 * se_per_year)
-
-total_change <- mean_year_effect^18
-upper_change <- upper_year_effect^18
-lower_change <- lower_year_effect^18
-
-# Calculate the percentage change
-percentage_change <- (total_change - 1) * 100
-upper_percentage_change <- (upper_change - 1) * 100
-lower_percentage_change <- (lower_change - 1) * 100
-
-# Print the result
-cat("Over the period of 2005 to 2023, we estimate average species richness at study locations to have changed by", 
-    round(percentage_change, 2), "%, with a 95% confidence interval of [", 
-    round(lower_percentage_change, 2), "%, ", round(upper_percentage_change, 2), "%].\n")
 
 
                      

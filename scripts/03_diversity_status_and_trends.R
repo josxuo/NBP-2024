@@ -24,56 +24,6 @@ rm(list = ls())
 library(tidyverse)
 library(readxl)
 
-# Custom bcs plotting theme at "code/00_bcs_theme.R"
-
-bcs_colors <- c(
-  "dark green" = "#0A3C23",
-  "cream" = "#FAF5F0",
-  "yellow green" = "#E6FF55",
-  "peach" = "#FFB98C",
-  "bright green" = "#36BA3A"
-)
-
-theme_bcs <- function() {
-  theme(
-    # Backgrounds
-    panel.background = element_rect(fill = bcs_colors["cream"], color = NA),
-    plot.background = element_rect(fill = bcs_colors["cream"], color = NA),
-    panel.grid.major = element_line(color = bcs_colors["dark green"], linewidth = 0.5, linetype = "dotted"),
-    panel.grid.minor = ggplot2::element_blank(),
-    
-    # Text
-    text = element_text(color = bcs_colors["dark green"]),
-    axis.text = element_text(color = bcs_colors["dark green"]),
-    axis.title = element_text(color = bcs_colors["dark green"]),
-    plot.title = element_text(color = bcs_colors["dark green"], face = "bold", size = 28),
-    plot.subtitle = element_text(color = bcs_colors["dark green"], face = "italic", size = 22),
-    plot.caption = element_text(color = bcs_colors["dark green"], size = 8),
-    
-    # Lines and borders
-    axis.line = element_line(color = bcs_colors["dark green"]),
-    axis.ticks = element_line(color = bcs_colors["dark green"]),
-    panel.border = element_rect(color = bcs_colors["dark green"], fill = NA),
-    
-    # Legends
-    legend.background = element_rect(fill = bcs_colors["cream"]),
-    legend.key = element_rect(fill = bcs_colors["cream"]),
-    legend.text = element_text(color = bcs_colors["dark green"]),
-    legend.title = element_text(color = bcs_colors["dark green"]),
-    
-    # Facets
-    strip.background = element_rect(fill = bcs_colors["yellow green"]),
-    strip.text = element_text(color = bcs_colors["dark green"], face = "bold")
-  )
-}
-
-# function for extracting overall p-value from model
-overall_p <- function(my_model) {
-  f <- summary(my_model)$fstatistic
-  p <- pf(f[1],f[2],f[3],lower.tail=F)
-  attributes(p) <- NULL
-  return(p)
-}
 
 # function for returning count circle codes with a complete set of survey data for a given set of years and months
 complete <- function(years, months, data) {
@@ -94,15 +44,21 @@ complete <- function(years, months, data) {
 # data and focal groups #----
 #########################
 # load raw data
-raw <- read_excel("data/a_raw_data/nbp_raw_jan_24.xlsx")
+# raw <- read_excel("data/raw/nbp_raw_jan_24.xlsx")
 
-# load tidied data (see script "01_tidy_raw_nbp.R" for details)
-dat <- read_excel("data/b_intermediate_data/nbp_tidy_jan_24.xlsx")
+# load data with list of non-overlapping count stations ("study set") and a few exploratory covariates
+covs <- read_csv("data/processed/circ_no_overlap_covariates.csv")
+
+# load tidied nbp data (see script "01_tidy_raw_nbp.R" for details)
+dat <- read_excel("data/processed/nbp_tidy_jan_24.xlsx")
 
 # Define active NBP sites
-status <- data.frame(park = c("Bliner Property", "Carkeek Park", "Cheasty Greenspace", "Clark Lake Park", "Discovery Park", "Genesee Park",
-                              "Golden Gardens Park", "Jenkin's Creek Park", "Lake Forest Park", "Lincoln Park", "Magnuson Park", "Seward Park",
-                              "Shadow Lake Bog", "Soos Creek", "Walsh Property", "Washington Park Arboretum"), 
+status <- data.frame(park = c("Bliner Property", "Carkeek Park", "Cheasty Greenspace", 
+                              "Clark Lake Park", "Discovery Park", "Genesee Park",
+                              "Golden Gardens Park", "Jenkin's Creek Park", 
+                              "Lake Forest Park", "Lincoln Park", "Magnuson Park", 
+                              "Seward Park", "Shadow Lake Bog", "Soos Creek", 
+                              "Walsh Property", "Washington Park Arboretum"), 
                      status = c("inactive", "active", "active", "inactive", "active",
                                 "active", "active", "inactive", "active", "active",
                                 "active", "active", "inactive", "inactive", "inactive",
@@ -114,6 +70,33 @@ dat <- left_join(dat, status)
 # inspect data if desired
 ## str(dat)
 ## head(dat)
+
+# filter nbp data for just study set count stations
+d <- dat %>% filter(station.code %in% covs$station.code) %>%
+  left_join(., select(covs, c("station.code", "latitude", "longitude", 
+                              "major.water.dist.m", "downtown.dist.m")),
+            join_by("station.code" == "station.code")) %>%
+  mutate(survey_date = as.Date(survey_date),
+         survey_start_date_time = as.POSIXct(paste(survey_date, start_time), 
+                                             tz = "America/Los_Angeles", 
+                                             "%Y-%m-%d %H:%M"),
+         survey_end_date_time = as.POSIXct(paste(survey_date, end_time), 
+                                           tz = "America/Los_Angeles", 
+                                           "%Y-%m-%d %H:%M"))
+
+
+sum(covs$major.water.dist.m < 50)
+hist(covs$major.water.dist.m, breaks = 100, xlim = c(0, 100))
+
+
+marine.stations <- c("CV6", "DB1", "DB3", "DB5", "DB6", "DB7", "DD3", "DD7", "DD8",  # based on stations that have observed surf scoter, rhin. auklet, mamu, or brant
+                     "DNB5", "GGM3", "GGM4", "GGM5", "GGM6")
+
+d %>% filter(station.code %in% marine.stations) %>%
+  group_by(year) %>%
+  summarise(n_distinct(survey_id)) %>%
+  view()
+
 
 # define focal bird groups
 ## invasive species
@@ -184,7 +167,7 @@ sort(S1)
 S2 <- unique(raw[!str_detect(raw$Species, pattern = " sp\\.|Spotted Owl"), ]$Species)
 sort(S1)
 
-## All observations lumped in current taxonomic status, including rarities and hybrids, but excluding spurios entry resolved to species level, including hybirds, subspecies, and spurious entries
+## All observations lumped in current taxonomic status, including rarities and hybrids, but excluding spurious entry resolved to species level, including hybirds, subspecies, and spurious entries
 S3 <- unique(dat[!str_detect(dat$species, pattern = " sp\\.|Spotted Owl"), ]$species)
 
 

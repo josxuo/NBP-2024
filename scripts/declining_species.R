@@ -12,10 +12,10 @@ srm <- dat %>%
          year %in% c(2005:2019, 2021, 2022, 2023),
          park %in% focal.parks) %>%
   mutate(observed = seen + heard + fly) %>% 
-  group_by(year, bird.code) %>%
+  group_by(year, species) %>%
   summarise(count = sum(observed), .groups = "drop") %>%
-  pivot_wider(names_from = bird.code, values_from = count, values_fill = 0) %>%
-  pivot_longer(-c(1, 2), names_to = "bird.code", values_to = "count") %>%
+  pivot_wider(names_from = species, values_from = count, values_fill = 0) %>%
+  pivot_longer(-c(1, 2), names_to = "species", values_to = "count") %>%
   left_join(., nsurv, join_by("year" == "year")) %>%
   mutate(maps = count / nsurv)
 
@@ -25,7 +25,7 @@ srm$time_period <- ifelse(srm$year <= 2014, "early", "late")
 
 # Calculate mean abundance for each species in each time period
 mean_abundance <- srm %>%
-  group_by(bird.code, time_period) %>%
+  group_by(species, time_period) %>%
   summarise(mean_maps = mean(maps, na.rm = TRUE))
 
 # Spread the data to compare early vs late period
