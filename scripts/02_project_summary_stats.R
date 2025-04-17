@@ -14,6 +14,8 @@ source("functions/theme_bcs.R")
 
 # load tidied data (see script "01_tidy_raw_nbp.R" for details)
 dat <- read_excel("data/processed/nbp_tidy_jan_24.xlsx")
+dat[dat$species == "Glaucous-winged x Western Gull", ]$bird.code <- "GWGU"
+dat[dat$species == "American x Eurasian Wigeon", ]$bird.code <- "AMWI"
 
 # inspect data if desired
 ## str(dat)
@@ -286,20 +288,161 @@ pmeanS
 
 
 library(vegan)
+nbp <- dat
+dat <- nbp
+
+
+######### AGGREGATE SPECIES RICHNESS TRENDS ################
+srm <- dat %>% 
+  filter(!str_detect(species, pattern = "sp\\.|Spotted Owl|Domestic"),
+         year %in% c(2005:2019, 2021, 2022, 2023), 
+         station.code %in% covs$station.code) %>%
+  mutate(observed = seen + heard + fly) %>% 
+  group_by(park, year, station.code, bird.code) %>%
+  summarise(count = sum(observed), .groups = "drop") %>%
+  pivot_wider(names_from = bird.code, values_from = count, values_fill = 0) %>%
+  mutate(station.year = paste(station.code, year, sep = "-"))
+
+
+nsurv <- dat %>% 
+  filter(!str_detect(species, pattern = "sp\\.|Spotted Owl|Domestic"),
+         year %in% c(2005:2019, 2021, 2022, 2023)) %>%
+  group_by(year, station.code) %>%
+  summarise(nsurv = n_distinct(survey_id), .groups = "drop") %>% 
+  mutate(station.year = paste(station.code, year, sep = "-"))
+
+
+years <- unique(srm$year)
+
+res.df <- data.frame(year = numeric(),
+                     Species = numeric(),
+                     jack1 = numeric())
+
+for(i in 1:length(years)){
+  year.dat <- srm %>% filter(year == years[i]) %>% select(-park, -station.code, -year,-station.year)
+  res <- specpool(year.dat)
+  res.df[i, 1] <- years[i]
+  res.df[i, 2] <- res$Species
+  res.df[i, 3] <- res$jack1
+}
+
+res.df <- left_join(res.df, nsurv.disco)
+
+head(res.df)
+
+plot(res.df$year, res.df$jack1)
+
+combined <- ggplot(res.df, aes(x = year, y = jack1)) +
+  geom_point(color = bcs_colors["dark green"]) + 
+  geom_smooth(method = "lm", color = bcs_colors["peach"], linetype = "dashed") +
+  labs(title = "Estimated combined species richness", subtitle = "All NBP parks", x = "Year", y = "Estimated species richness") +
+  theme_bcs()
+
+
+png(filename = "results/figures/combined_richness_over_time.png",
+    height = 3, width = 3, units = "in", res = 300)
+combined
+dev.off()
+
+covs <- read.csv("data/processed/circ_no_overlap_covariates.csv")
 
 focal.parks <- c("Carkeek Park", "Discovery Park", "Genesee Park", "Golden Gardens Park", 
-                 "Magnuson Park", "Seward Park", "Washington Park Arboretum")
+                 "Magnuson Park", "Seward Park", "Cheasty Greenspace", "Lake Forest Park", "Washington Park Arboretum")
 
 srm <- dat %>% 
-  filter(!str_detect(species, pattern = " x | sp\\.|Spotted Owl|Domestic"),
-         year %in% c(2005:2019, 2021, 2022, 2023),
-         station.code %in% covs$station.code) %>%
+  filter(!str_detect(species, pattern = "sp\\.|Spotted Owl|Domestic"),
+         year %in% c(2005:2019, 2021, 2022, 2023)) %>%
+         #station.code %in% covs$station.code,
+         #park == "Discovery Park", 
+         #!loop %in% c("Capehart", "Cemetery", "Nike/500")) %>%
   mutate(observed = seen + heard + fly) %>% 
   group_by(park, year, station.code, bird.code) %>%
   summarise(count = sum(observed), .groups = "drop") %>%
   pivot_wider(names_from = bird.code, values_from = count, values_fill = 0)
 
+
+nsurv.disco <- dat %>% 
+  filter(!str_detect(species, pattern = "sp\\.|Spotted Owl|Domestic"),
+         year %in% c(2005:2019, 2021, 2022, 2023),
+         #station.code %in% covs$station.code,
+         park == "Discovery Park", 
+         !loop %in% c("Capehart", "Cemetery", "Nike/500")) %>%
+  group_by(year) %>%
+  summarise(nsurv = n_distinct(survey_id), .groups = "drop")
+
+
+unique(nbp[nbp$park == "Discovery Park",]$loop)
+disco.est <- specpool(select(srm, -park, -year, -station.code))
+
+colnames(srm)
+
 srm.focal <- srm %>% filter(park %in% focal.parks)
+
+years <- unique(srm$year)
+
+res.df <- data.frame(year = numeric(),
+                     Species = numeric(),
+                     jack1 = numeric())
+
+for(i in 1:length(years)){
+  year.dat <- srm %>% filter(year == years[i]) %>% select(-park, -station.code)
+  res <- specpool(year.dat)
+  res.df[i, 1] <- years[i]
+  res.df[i, 2] <- res$Species
+  res.df[i, 3] <- res$jack1
+}
+
+res.df <- left_join(res.df, nsurv.disco)
+
+nbp %>% filter(park == "Discovery Park") %>% group_by(loop) %>%
+  summarise(min = min(survey_date), max = max(survey_date))
+
+
+disco.s.yr <- ggplot(data = res.df, aes(x = year, y = Species)) +
+  #geom_line(aes(x = year, y = jack1, size = 0.5, alpha = 0.8)) +
+  geom_point(color = "#0A3C23") +
+  geom_smooth(method = "lm", color = "#FFB98C", linetype = "dashed") +
+  #scale_color_manual(name = "Measure",
+  #                   values = c("First-order jackknife estimate" = "#FFB98C")) +
+  #scale_y_continuous(expand = expansion(mult = c(0, 0)),
+  #                   limits = c(0, 180)) +
+  labs(title = "Total species reported over time", subtitle = "Discovery Park",
+       y = "Number of species", x = "Year", color = "Key") +
+  theme_bcs() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.spacing = unit(-1, "lines"),
+        legend.key.size = unit(0.8, "lines"))
+
+png(filename = "results/figures/disco_S_over_time.png",
+    height = 3, width = 3, units = "in", res = 300)
+disco.s.yr
+dev.off()
+
+
+res.df$yr <- res.df$year - min(res.df$year)
+
+mod <- lm(Species ~ yr, data = res.df)
+
+
+summary(mod)
+
+
+specpool(select(srm, -park, -station.code))
+
+res <- data.frame(park = character(),
+                  jack1 = numeric())
+
+for(i in 1:length(focal.parks)) {
+  rich.dat <- srm %>% filter(park == focal.parks[i]) %>% select(-park, -station.code)
+  res[i, 1] <- focal.parks[i]
+  res[i, 2] <- specpool(rich.dat)$jack1
+}
+
+view(res)
+
+stations <- covs%>%group_by(park) %>%
+  summarise(n.station = n_distinct(station.code))
+
 
 
 year.list <- list()
@@ -378,10 +521,266 @@ p.park_ests_over_time <- ggplot() +
         legend.spacing = unit(-1, "lines"),
         legend.key.size = unit(0.8, "lines"))
 
-png(filename = "results/figures/02_estimates_spp_richness_over_time_by_park.png",
-    width = 7, height = 4, units = "in", res = 300)
-p.park_ests_over_time
+#png(filename = "results/figures/02_estimates_spp_richness_over_time_by_park.png",
+#    width = 7, height = 4, units = "in", res = 300)
+#p.park_ests_over_time
+#dev.off()
+
+
+dplot <- plot.df %>% filter(park == "Discovery Park", 
+                            (estimator == "Observed richness" | estimator == "First-order jackknife estimate"))
+
+d_plot <- ggplot() +
+  geom_col(data = dplot %>% filter(estimator == "Observed richness"), 
+           aes(x = year, y = richness_estimate, group = interaction(park, estimator), 
+               fill = estimator)) +
+  
+  geom_smooth(data = dplot %>% filter(estimator == "First-order jackknife estimate"), 
+              aes(x = year, y = richness_estimate, linetype = "Best fit trend"), 
+              color = "#FFB98C", linewidth = 0.5, alpha = 0.7, method = "lm", se = FALSE) +
+  
+  geom_line(data = dplot %>% filter(estimator == "First-order jackknife estimate"), 
+            aes(x = year, y = richness_estimate, group = interaction(park, estimator), 
+                color = estimator), size = 0.7) +
+  
+  scale_fill_manual(name = "Measure",
+                    values = c("Observed richness" = "#0A3C23"),
+                    limits = c("Observed richness")) + 
+  scale_color_manual(name = element_blank(),
+                     values = c(#"Chao1 estimate" = "#FFB98C", 
+                                "First-order jackknife estimate" = "#36BA3A" 
+                                #"Second-order jackknife estimate" = "#0A3C23",
+                                #"Bootstrapped estimate"= "#E6FF55",
+                                #"Best fit trend" = "black"),
+                     ),
+                     limits = c(#"Chao1 estimate", 
+                                "First-order jackknife estimate"
+                                #"Second-order jackknife estimate",
+                               #"Bootstrapped estimate",
+                                #"Best fit trend"))
+                               )) +
+  
+  scale_linetype_manual(name = element_blank(),
+                        values = c("Best fit trend" = "solid"),
+                        limits = c("Best fit trend")) + # This keeps it last
+  guides(#fill = guide_legend(order = 1),
+           color = guide_legend(order = 1), 
+         linetype = guide_legend(order = 2)) + # Ensures linetype is last
+  
+  scale_y_continuous(expand = expansion(mult = c(0, 0.02)))+ 
+  labs(title = "Estimates of Species Richness over Time", 
+       subtitle = "Discovery Park", y = "Number of Species", x = "Year") +
+  theme_bcs() +
+  theme(legend.spacing = unit(-1, "lines"),
+        legend.key.size = unit(0.2, "cm"), 
+        plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "in"))
+
+
+
+png(filename = "results/figures/discovery_species_over_time.png", height = 3.5, 
+    width = 3.5, units = "in", res = 300)
+d_plot
 dev.off()
+
+moddat <- filter(dplot, estimator == "First-order jackknife estimate") %>% 
+  mutate(yr = as.numeric(scale(year)))
+
+mod.null <- glm(round(richness_estimate, 0) ~ 1, data = moddat, family = poisson)
+mod.1 <- glm(round(richness_estimate, 0) ~ yr, data = moddat, family = poisson) 
+
+summary(mod.null)
+summary(mod.1)
+
+library(DHARMa)
+
+plot(simulateResiduals(mod.1))
+
+mod_qp <- glm(round(jack1, 0) ~ year + park, family = quasipoisson, data = combined_estimates.df)
+
+summary(mod.null)
+summary(mod.1)
+summary(mod_qp)
+
+
+
+diversity_by_year <- dat %>% 
+  filter(park == "Discovery Park",
+         !str_detect(species, pattern = "sp\\.|Domestic|Spotted Owl")) %>%
+  group_by(station.code, year, bird.code) %>%
+  summarise(count = mean(seen + fly + heard), .groups = "drop") %>%
+  pivot_wider(names_from = bird.code, values_from = count, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(shannon = diversity(c_across(-c(year, station.code)), index = "shannon")) %>%
+  ungroup()
+
+view(diversity_by_year[diversity_by_year$shannon == 0, ])
+
+pdat <- diversity_by_year %>% filter(!year %in% c(2020, 2024)) %>% mutate(yr = as.numeric(scale(year)),
+                                                                          shannon2 = ifelse(shannon == 0, 0.01, shannon)) %>%
+  dplyr::select(year, yr, station.code, shannon, shannon2)
+
+ggplot(pdat, aes(x = year, y = shannon)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+  theme_bcs()
+
+summary(pdat)
+class(pdat$month)
+hist(pdat$shannon)
+shapiro.test(log(pdat$shannon + 1))
+## data not normally distributed
+
+pdat %>% group_by(year) %>% mutate(variance = var(shannon)) %>%
+  ggplot(., aes(y = variance, group = year))+ geom_boxplot()
+
+## variance not constant (but better aggregagted to year
+
+mod <- glmmTMB(shannon2 ~ yr + station.code, family = tweedie(link = "log"), data = pdat)
+
+
+summary(mod)
+
+
+resids <- simulateResiduals(mod)
+plot(resids)
+
+
+
+mod <- glmmTMB((() ~ poly(yrmodmod <- glmmTMB((() ~ poly(yr,2) + as.factor(month) + (1 | station.code), zi = ~ as.factor(month), family = tweedie, data = pdat)
+
+testZeroInflation(mod)
+residuals <- simulateResiduals(mod)
+plot(residuals)
+
+
+pdat[pdglmmTMB()pdat[pdat$shannon == 0, ]
+
+ggplot(pdat, aes(x = year, y = shannon)) + geom_point()
+
+shapiro.test(pdat$shannon)
+
+hist(log(pdat$shannon + 1))
+
+hist(pdat$shannon)
+
+summary(pdat$year)
+
+library(MASS)
+library(glmmTMB)
+
+mod.gamma.null <- glmmTMB(shannon ~ 1, family = Gamma(link = "log"), data = pdat)
+mod.gamma.1 <- glmmTMB(shannon ~ yr, family = Gamma(link = "log"), data = pdat)
+mod.gamma.2 <- glmmTMB(shannon ~ yr + as.factor(month), family = Gamma(link = "log"), data = pdat)
+mod.tweedie.null <- glmmTMB(shannon ~ 1, family = tweedie, data = pdat)
+mod.tweedie.1 <- glmmTMB(shannon ~ yr, family = tweedie, data = pdat)
+mod.tweedie.2 <- glmmTMB(shannon ~ yr + as.factor(month), family = tweedie, data = pdat)
+
+mod.gaus.2 <- glmmTMB((1 / shannon) ~ yr + (1 | month), family = gaussian, data = pdat)
+
+AIC(mod.gamma.null, mod.gamma.1, mod.gamma.2, mod.tweedie.null, mod.tweedie.1, mod.tweedie.2, mod.gaus, mod.gaus.2)
+
+library(statmod)
+
+
+
+mod.tweedie.2.1 <- glm( ~ yr + as.factor(month), family = tweedie(var.power = 6, link.power = 0), data = pdat)
+
+
+par(mfrow = c(2, 2))
+plot(mod.gaus)
+
+predicted <- predict(mod.gaus.2, type = "response")
+
+# Plot observed vs. predicted
+plot((1/ pdat$shannon), predicted, main = "Observed vs. Predicted", 
+     xlab = "Observed", ylab = "Predicted")
+abline(a = 0, b = 1, col = "red")
+
+residuals_gaus <- residuals(mod.gaus.2)
+fitted_gaus <- fitted(mod.gaus.2)
+
+qqnorm(residuals_gaus)
+qqline(residuals_gaus, col = "red")
+
+# Plot residuals vs. fitted values
+plot(fitted_gaus, residuals_gaus, 
+     xlab = "Fitted values", 
+     ylab = "Residuals", 
+     main = "Residuals vs Fitted Values")
+abline(h = 0, col = "red")  # Add a horizontal line at 0 for reference
+
+resids <- simulateResiduals(mod.gaus.2)
+plot(resids)
+
+mod.gaus <- glm(shannon ~ yr + as.factor(month), family = gaussian, data = pdat)
+
+
+boxcox_res <- boxcox(mod.gaus)
+
+plot(boxcox_res)
+
+lambda <- boxcox_res$x[which.max(boxcox_res$y)]
+pdat$shannon_bc <- (pdat$shannon ^ lambda - 1) / lambda  # Apply Box-Cox
+
+
+# Fit the model again
+mod.bc <- glm(shannon_bc ~ yr + as.factor(month), family = gaussian(), data = pdat)
+
+# Check diagnostics
+summary(mod.bc)
+
+
+predicted <- predict(mod, type = "response")
+
+# Plot observed vs. predicted
+plot((sqrt(pdat$shannon)), predicted, main = "Observed vs. Predicted", 
+     xlab = "Observed", ylab = "Predicted")
+abline(a = 0, b = 1, col = "red")
+
+residuals_gaus <- residuals(mod)
+fitted_gaus <- fitted(mod)
+
+qqnorm(residuals_gaus)
+qqline(residuals_gaus, col = "red")
+
+# Plot residuals vs. fitted values
+plot(fitted_gaus, residuals_gaus, 
+     xlab = "Fitted values", 
+     ylab = "Residuals", 
+     main = "Residuals vs Fitted Values")
+abline(h = 0, col = "red")  # Add a horizontal line at 0 for reference
+
+resids <- simulateResiduals(mod.bc)
+plot(resids)
+
+mod.bc2 <- glm(shannon_bc ~ poly(yr, 2) + as.factor(month), family = gaussian(), data = pdat)
+mod.whatever <- glm((1/shannon) ~ poly(yr, 2) + as.factor(month), family = gaussian(), data = pdat)
+
+resids <- simulateResiduals(mod.whatever)
+plot(resids)
+
+
+
+summary(mod.bc2)
+
+
+AIC(mod.gaus, mod.gaus.2, mod.bc, mod.bc2, mod.whatever)
+
+
+
+shapiro.test(residuals_gaus)
+testOutliers(residuals)
+testZeroInflation(resids)
+
+residuals <- residuals(mod)
+threshold <- 3 * sd(residuals)
+
+
+# Find observations that exceed the threshold
+outlier_indices <- which(abs(residuals) > threshold)
+
+# Extract the specific rows of data that are outliers
+outlier_data <- pdat[outlier_indices, ]
 
 ## try other estimators
 

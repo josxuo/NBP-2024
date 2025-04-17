@@ -219,13 +219,17 @@ int[int$species == "Thayer's Gull", ]$species <- "Iceland Gull"
 int[int$species == "Pacific-slope Flycatcher", ]$species <- "Western Flycatcher"
 
 # Add alphanumeric codes for count circles and species
-station.codes <- read_csv("data/c_analysis_data/nbp_circ_codes.csv") ## table with circle codes
-bird.codes <- read_xlsx("data/zz_miscellaneous_data/NBP_species_list+functional_traits.xlsx") %>% select(alpha.code, com.name)
+station.codes <- read_csv("data/processed/nbp_circ_codes.csv") ## table with circle codes
+bird.codes <- read_xlsx("data/processed/nbp_species_traits.xlsx") %>% select(bird.code, common.name)
+
 
 ### join to intermediate data
 int <- left_join(int, station.codes) %>%
-  left_join(., bird.codes, join_by("species" == "com.name")) %>%
-  rename(station.code = code, bird.code = alpha.code)
+  left_join(., bird.codes, join_by("species" == "common.name")) %>%
+  rename(station.code = code)
+
+int[int$species == "Glaucous-winged x Western Gull", ]$bird.code <- "GWGU"
+int[int$species == "American x Eurasian Wigeon", ]$bird.code <- "AMWI"
 
 view(int[is.na(int$station.code), ])
 
@@ -281,10 +285,19 @@ int$exclusions <- case_when(int$park == "Magnuson Park" & int$loop %in% weird.lo
 ## Explore alpha code join
 unique(int[is.na(int$bird.code), ]$species)
 
-### only sp. records and hybrids--all good!
+### only sp. records and domestic--all good!
+
+## Create a total observed field (sum of seen, heard, and fly)
+
+int$observed <- int$seen +int$heard + int$fly
+
+int <- int %>% select("obs_id","year","month","survey_date","survey_id","start_time","park","loop","station","station.code","precipitation","weather","wind","species","bird.code", "seen","heard","fly","observed", everything())
+
+view(int[1:100, ])
+
  
 # Write intermediate data file
 # write.csv(int, "data/b_intermediate_data/nbp_tidy_jan_24.csv", row.names = FALSE) # .csv too large
 
-write.xlsx(int, "data/b_intermediate_data/nbp_tidy_jan_24.xlsx")
+write.xlsx(int, "data/processed/nbp_tidy_jan_24.xlsx")
 ############## END ###############
